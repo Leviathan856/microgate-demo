@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MicroGate Full Potential Dashboard</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f9; color: #333; margin: 0; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px; }
+        .section-title { margin-top: 30px; font-size: 1.3rem; color: #34495e; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px; }
+        
+        .card { background: #ecf0f1; padding: 15px; border-radius: 6px; text-align: center; border-top: 4px solid #3498db; }
+        .card.actuator { border-top: 4px solid #e67e22; }
+        .card h2 { margin: 0; font-size: 1.1rem; margin-bottom: 10px; color: #7f8c8d; }
+        .card .value { font-size: 1.8rem; font-weight: bold; color: #2980b9; }
+        
+        .controls { margin-top: 30px; padding: 15px; background: #e8f8f5; border-radius: 6px; }
+        input, button, select { padding: 10px; margin: 5px; border: 1px solid #ccc; border-radius: 4px; }
+        input[type="text"] { width: 250px; }
+        button { background-color: #27ae60; color: white; cursor: pointer; border: none; font-weight: bold; }
+        button:hover { background-color: #2ecc71; }
+        button.btn-warn { background-color: #e74c3c; }
+        button.btn-warn:hover { background-color: #c0392b; }
+        
+        #serverStats { padding: 10px; background: #34495e; color: #ecf0f1; border-radius: 4px; margin-top: 10px; display: inline-block; font-family: monospace;}
+        #authResult { padding: 10px; border-radius: 4px; margin-top: 5px; font-weight: bold; display:none;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>MicroGate Embedded Control Center</h1>
+        <p>Complete capabilities showcase: Headers validation, Actuators REST states, Analytics & Static mapping.</p>
+        
+        <div id="serverStats">Loading framework specs...</div>
+
+        <!-- Sensors Section -->
+        <div class="section-title">📡 Active Sensors</div>
+        <div class="grid" id="sensorsContainer"><p>Loading...</p></div>
+
+        <!-- Actuators Section -->
+        <div class="section-title">⚙️ Hardware Actuators</div>
+        <div class="grid" id="actuatorsContainer"><p>Loading...</p></div>
+
+        <!-- Simulator Tools -->
+        <div class="controls">
+            <h3>Simulator Panel</h3>
+            
+            <fieldset style="border: 1px solid #bdc3c7; border-radius: 4px; padding: 15px; margin-bottom: 15px;">
+                <legend style="font-weight:bold;">Update Sensor Configuration</legend>
+                <input type="text" id="sensorId" placeholder="New Sensor ID" required>
+                <input type="number" id="sensorValue" placeholder="Value" step="any" required>
+                <button onclick="postSensor()">Push Data via App JSON</button>
+            </fieldset>
+
+            <fieldset style="border: 1px solid #bdc3c7; border-radius: 4px; padding: 15px; margin-bottom: 15px;">
+                <legend style="font-weight:bold;">HTTP Header Security Validation</legend>
+                <p>Attempts to retrieve classified JSON data using the `Authorization: Bearer` extraction endpoint.</p>
+                <input type="text" id="tokenInput" placeholder="Auth Token. Try: secret_microgate_token_123" value="invalid_token_guess">
+                <button onclick="testSecureEndpoint()" class="btn-warn">Access Secure Data</button>
+                <div id="authResult"></div>
+            </fieldset>
+        </div>
+    </div>
+
+    <script>
+        async function fetchSystem() {
+            try {
+                let [sys, sens, acts] = await Promise.all([
+                    fetch('/api/system').then(r => r.json()),
+                    fetch('/api/sensors').then(r => r.json()),
+                    fetch('/api/actuators').then(r => r.json())
+                ]);
+
+                document.getElementById('serverStats').innerHTML = 
+                    `<strong>MicroGate System:</strong> ${sys.system_id} (Rev ${sys.version}) | <strong>Uptime:</strong> ${sys.uptime_seconds}s | <strong>Req:</strong> ${sys.total_framework_api_calls} | <strong>RAM:</strong> ${sys.memory_kb} KB | <strong>CPU:</strong> ${sys.cpu_percent}%`;
+
+                let sHtml = '';
+                for (const [id, value] of Object.entries(sens)) {
+                    sHtml += `<div class="card"><h2>${id.toUpperCase()}</h2><div class="value">${value}</div>
+                    <button class="btn-warn" onclick="deleteSensor('${id}')" style="margin-top: 10px; width: 100%">DELETE</button></div>`;
+                }
+                document.getElementById('sensorsContainer').innerHTML = sHtml;
+
+                let aHtml = '';
+                for (const [id, value] of Object.entries(acts)) {
+                    aHtml += `
+                        <div class="card actuator">
+                            <h2>${id.toUpperCase()}</h2>
+                            <div class="value" style="color: ${value ? '#27ae60' : '#e74c3c'}">${value ? 'ON' : 'OFF'}</div>
+                            <button onclick="toggleActuator('${id}', document.querySelector('.card.actuator .value').innerText === 'ON' ? 'OFF' : 'ON')" style="width: 100%; margin-top:10px;">Toggle</button>
+                        </div>`;
+                }
+                document.getElementById('actuatorsContainer').innerHTML = aHtml;
+
+            } catch (e) {
+                console.error("Dashboard out of sync", e);
+            }
+        }
+
+        async function postSensor() {
+            const id = document.getElementById('sensorId').value;
+            const value = parseFloat(document.getElementById('sensorValue').value);
+            if (!id || isNaN(value)) return;
+
+            await fetch('/api/sensors', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, value }),
+            });
+            fetchSystem();
+        }
+
+        async function deleteSensor(id) {
+            await fetch('/api/sensors', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id }),
+            });
+            fetchSystem();
+        }
+
+        async function toggleActuator(id, targetState) {
+            await fetch('/api/actuators', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id, command: targetState }),
+            });
+            fetchSystem();
+        }
+
+        async function testSecureEndpoint() {
+            const token = document.getElementById('tokenInput').value;
+            const res = await fetch('/api/secure', {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            
+            const rDiv = document.getElementById('authResult');
+            rDiv.style.display = 'block';
+
+            if (res.status === 401) {
+                rDiv.style.backgroundColor = '#fae1e1';
+                rDiv.style.color = '#c0392b';
+                rDiv.innerText = `HTTP ${res.status}: Access Denied (Validation correctly caught invalid token)`;
+            } else if (res.status === 200) {
+                const data = await res.json();
+                rDiv.style.backgroundColor = '#e1fae8';
+                rDiv.style.color = '#27ae60';
+                rDiv.innerText = `HTTP ${res.status}: Granted. Data = ${data.classified_data}`;
+            }
+        }
+
+        setInterval(fetchSystem, 1000);
+        fetchSystem();
+    </script>
+</body>
+</html>
